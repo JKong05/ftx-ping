@@ -4,11 +4,11 @@ import { commands } from "./commands/commands.js";
 import { config } from "./config.js";
 
 const client = new Client({
-    intents: ["Guilds"],
+  intents: ["Guilds"],
 });
 
 client.once("clientReady", () => {
-    console.log(`Logged in as ${client.user?.tag}!`);
+  console.log(`Logged in as ${client.user?.tag}!`);
 });
 
 // on initial bot join
@@ -29,10 +29,6 @@ client.on("interactionCreate", async (interaction) => {
     commands[commandName as keyof typeof commands].execute(interaction);
   }
 });
-    
+
 // discord logging with token
 client.login(config.discordToken);
-
-
-
-
