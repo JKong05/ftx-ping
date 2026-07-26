@@ -1,21 +1,23 @@
 import { Client } from "discord.js";
-import { deployCommands } from "./deploy-commands";
-import { commands } from "./commands";
+import { deployCommands } from "./deploy-commands.js";
+import { commands } from "./commands/commands.js";
+import { config } from "./config.js";
 
 const client = new Client({
-    intents: [
-        "Guilds",
-        "GuildMessages",
-        "MessageContent",
-    ],
+    intents: ["Guilds"],
 });
 
-client.once("ready", () => {
+client.once("clientReady", () => {
     console.log(`Logged in as ${client.user?.tag}!`);
 });
 
+// on initial bot join
 client.on("guildCreate", async (guild) => {
-  await deployCommands({ guildId: guild.id });
+  try {
+    await deployCommands({ guildId: guild.id });
+  } catch (error) {
+    console.error(`Failed to register commands for guild ${guild.id}:`, error);
+  }
 });
 
 client.on("interactionCreate", async (interaction) => {
@@ -28,9 +30,8 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
     
-
 // discord logging with token
-client.login(process.env.DISCORD_TOKEN);
+client.login(config.discordToken);
 
 
 
