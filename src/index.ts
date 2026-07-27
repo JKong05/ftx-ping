@@ -1,7 +1,7 @@
 import { Client } from "discord.js";
-import { deployCommands } from "./deploy-commands.js";
-import { commands } from "./commands/commands.js";
-import { config } from "./config.js";
+import { deployCommands } from "./deploy-commands.ts";
+import { commands } from "./commands/index.ts";
+import { config } from "./config.ts";
 
 const client = new Client({
   intents: ["Guilds"],
@@ -21,12 +21,21 @@ client.on("guildCreate", async (guild) => {
 });
 
 client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isCommand()) {
+  // isChatInputCommand narrows to the subclass that actually carries `options`;
+  // isCommand would also match context menu interactions, which don't.
+  if (!interaction.isChatInputCommand()) {
     return;
   }
-  const { commandName } = interaction;
-  if (commands[commandName as keyof typeof commands]) {
-    commands[commandName as keyof typeof commands].execute(interaction);
+
+  const command = commands[interaction.commandName];
+  if (!command) {
+    return;
+  }
+
+  try {
+    await command.execute(interaction);
+  } catch (error) {
+    console.error(`Command ${interaction.commandName} failed:`, error);
   }
 });
 
