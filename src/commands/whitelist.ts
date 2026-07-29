@@ -6,6 +6,7 @@ import {
   SlashCommandBuilder,
   User,
 } from "discord.js";
+import { sql, type WhitelistEntry } from "../db.ts";
 
 export const data = new SlashCommandBuilder()
   .setName("whitelist")
@@ -39,6 +40,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // setContexts(Guild) keeps this non-null at runtime; the guard is for the types.
+  const { guildId } = interaction;
+  if (!guildId) {
+    await interaction.reply({
+      content: "This command only works in a server.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   // quick defer to avoid timeout during db interaction
   await interaction.deferReply();
 
@@ -46,13 +57,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // only add/del declare a "user" option — list would throw on a required lookup
     switch (interaction.options.getSubcommand()) {
       case "add":
-        await handleAdd(interaction, interaction.options.getUser("user", true));
+        await handleAdd(interaction, guildId, interaction.options.getUser("user", true));
         break;
       case "del":
-        await handleRemove(interaction, interaction.options.getUser("user", true));
+        await handleRemove(interaction, guildId, interaction.options.getUser("user", true));
         break;
       case "list":
-        await handleList(interaction);
+        await handleList(interaction, guildId);
         break;
     }
   } catch (e) {
@@ -63,58 +74,63 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 }
 
-async function handleAdd(interaction: ChatInputCommandInteraction, user: User) {
+async function handleAdd(interaction: ChatInputCommandInteraction, guildId: string, user: User) {
   // do not whitelist bots
   if (user.bot) {
     await interaction.editReply("**Bots can't be whitelisted**");
     return;
   }
 
-  // TODO(db): look up (guildId, user.id); bail out early if the row exists.
-  // const existing = await db.whitelist.find(interaction.guildId, user.id);
-  // if (existing) {
-  //   await interaction.editReply(`${user} is already whitelisted.`);
-  //   return;
-  // }
+  // The composite PK does the duplicate check for us — `do nothing` means an
+  // existing row yields zero returned rows, so no separate lookup is needed.
+  // Keyed on the snowflake because usernames change freely.
+  const inserted = await sql`
+    insert into whitelist (guild_id, user_id, added_by)
+    values (${guildId}, ${user.id}, ${interaction.user.id})
+    on conflict (guild_id, user_id) do nothing
+    returning user_id
+  `;
 
-  // TODO(db): insert the row. Key on the snowflake — usernames change freely.
-  // Ping metadata hangs off this record.
-  // await db.whitelist.insert({
-  //   guildId: interaction.guildId,
-  //   userId: user.id,
-  //   addedBy: interaction.user.id,
-  //   addedAt: new Date(),
-  // });
-  await interaction.editReply(`**Added ${user}**`);
+  if (inserted.count === 0) {
+    await interaction.editReply(`<@${user.id}> is already whitelisted.`);
+    return;
+  }
+
+  await interaction.editReply(`**Added <@${user.id}>**`);
 }
 
-async function handleRemove(interaction: ChatInputCommandInteraction, user: User) {
-  // TODO(db): delete the row, and report the no-op if nothing matched.
-  // const removed = await db.whitelist.delete(interaction.guildId, userId);
-  // if (!removed) {
-  //   await interaction.editReply("That user isn't on the whitelist.");
-  //   return;
-  // }
+async function handleRemove(interaction: ChatInputCommandInteraction, guildId: string, user: User) {
+  const removed = await sql`
+    delete from whitelist
+    where guild_id = ${guildId} and user_id = ${user.id}
+    returning user_id
+  `;
+
+  if (removed.count === 0) {
+    await interaction.editReply("That user isn't on the whitelist.");
+    return;
+  }
 
   await interaction.editReply(`**Removed <@${user.id}> from the whitelist**`);
 }
 
-async function handleList(interaction: ChatInputCommandInteraction) {
-  // TODO(db): fetch all rows for this guild.
-  // const entries = await db.whitelist.listByGuild(interaction.guildId);
-  const entries: { userId: string }[] = [];
+async function handleList(interaction: ChatInputCommandInteraction, guildId: string) {
+  const entries = await sql<Pick<WhitelistEntry, "user_id">[]>`
+    select user_id
+    from whitelist
+    where guild_id = ${guildId}
+    order by added_at
+  `;
 
   if (entries.length === 0) {
     await interaction.editReply("No users are whitelisted yet.");
     return;
   }
 
-  // Message content caps at 2000 characters; page once this outgrows a screen.
-  const lines = entries.map((entry) => `• <@${entry.userId}>`).join("\n");
+  const lines = entries.map((entry) => `• <@${entry.user_id}>`).join("\n");
 
   await interaction.editReply({
     content: `**Whitelisted users (${entries.length})**\n${lines}`,
-    // Render the mentions as names without pinging everyone in the list.
     allowedMentions: { parse: [] },
   });
 }
